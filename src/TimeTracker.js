@@ -1,25 +1,26 @@
-import React, { useReducer, useEffect, useCallback, useRef } from 'react';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useReducer, useEffect, useCallback, useRef, useState } from 'react';
+import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Edit2, Check, X } from 'lucide-react';
 
-const departments = [
-  'Homelessness', 'Public Safety', 'E&E', 'Housing First',
-  'DCE', 'I-REN', 'Transportation', 'ACCESS',
-  'Arts & Music', 'CV Link', 'CV Sync', 'CVCC'
+const defaultDepartments = [
+  'Homelessness', 'Public Safety', 'E&S', 'CVPA',
+  'CV Housing First', 'DCE', 'Transportation', 'Arts & Music',
+  'CV Link', 'CV Sync', 'CVCC', 'Holiday',
+  'Sick', 'Vacation'
 ];
 
 const backgroundColors = {
-  'Homelessness': '#3D3520', 'Public Safety': '#3D2320', 'E&E': '#203D20',
-  'Housing First': '#20203D', 'DCE': '#3D2E20', 'I-REN': '#2E203D',
-  'Transportation': '#20303D', 'ACCESS': '#3D2037', 'Arts & Music': '#3D203D',
-  'CV Link': '#203D2E', 'CV Sync': '#203D3A', 'CVCC': '#3D2626'
+  0: '#3D3520', 1: '#3D2320', 2: '#203D20', 3: '#20203D',
+  4: '#3D2E20', 5: '#2E203D', 6: '#20303D', 7: '#3D2037',
+  8: '#3D203D', 9: '#203D2E', 10: '#203D3A', 11: '#3D2626',
+  12: '#2E3D20', 13: '#3D3520'
 };
 
 const DEFAULT_BG_COLOR = '#1E2124';
 const TIMEZONE = 'America/Los_Angeles';
 
-const createInitialTimers = () => departments.reduce((acc, dept) => ({
+const createInitialTimers = (departments) => departments.reduce((acc, dept, index) => ({
   ...acc,
-  [dept]: { isActive: false, time: 0 }
+  [index]: { isActive: false, time: 0 }
 }), {});
 
 const getTodayDate = () => {
@@ -29,6 +30,7 @@ const getTodayDate = () => {
 const initialState = {
   currentDate: getTodayDate(),
   timers: {},
+  departments: defaultDepartments,
 };
 
 const isLocalStorageAvailable = () => {
@@ -48,7 +50,7 @@ const saveState = (state) => {
     try {
       const serializedState = JSON.stringify(state);
       localStorage.setItem('timeTrackerState', serializedState);
-      console.log('State saved successfully:', serializedState);
+      console.log('State saved successfully');
     } catch (err) {
       console.error('Failed to save state to localStorage:', err);
     }
@@ -64,7 +66,7 @@ const loadState = () => {
         return undefined;
       }
       const parsedState = JSON.parse(serializedState);
-      console.log('Loaded state from localStorage:', parsedState);
+      console.log('Loaded state from localStorage');
       return parsedState;
     } catch (err) {
       console.error('Failed to load state from localStorage:', err);
@@ -98,9 +100,9 @@ function reducer(state, action) {
     case 'TOGGLE_TIMER':
       const currentDateTimers = state.timers[state.currentDate] || {};
       const newTimers = { ...currentDateTimers };
-      Object.keys(newTimers).forEach(dept => {
-        if (dept !== action.payload && newTimers[dept]?.isActive) {
-          newTimers[dept] = { ...newTimers[dept], isActive: false };
+      Object.keys(newTimers).forEach(index => {
+        if (parseInt(index) !== action.payload && newTimers[index]?.isActive) {
+          newTimers[index] = { ...newTimers[index], isActive: false };
         }
       });
       newTimers[action.payload] = {
@@ -116,8 +118,8 @@ function reducer(state, action) {
       };
       break;
     case 'ADJUST_TIME':
-      const { dept, direction } = action.payload;
-      const currentTime = state.timers[state.currentDate]?.[dept]?.time || 0;
+      const { index, direction } = action.payload;
+      const currentTime = state.timers[state.currentDate]?.[index]?.time || 0;
       const currentMinutes = Math.floor(currentTime / 60);
       const roundedMinutes = Math.round(currentMinutes / 15) * 15;
       const adjustment = direction === 'up' ? 15 : -15;
@@ -128,8 +130,8 @@ function reducer(state, action) {
           ...state.timers,
           [state.currentDate]: {
             ...state.timers[state.currentDate],
-            [dept]: {
-              ...state.timers[state.currentDate]?.[dept],
+            [index]: {
+              ...state.timers[state.currentDate]?.[index],
               time: newMinutes * 60
             }
           }
@@ -139,10 +141,53 @@ function reducer(state, action) {
     case 'CHANGE_DATE':
       newState = { ...state, currentDate: action.payload };
       break;
+    case 'UPDATE_DEPARTMENT_NAME':
+      const { index: deptIndex, name } = action.payload;
+      const newDepartments = [...state.departments];
+      newDepartments[deptIndex] = name;
+      newState = { ...state, departments: newDepartments };
+      break;
+    case 'REORDER_DEPARTMENTS':
+      const { fromIndex, toIndex } = action.payload;
+      const reorderedDepartments = [...state.departments];
+      const [movedDept] = reorderedDepartments.splice(fromIndex, 1);
+      reorderedDepartments.splice(toIndex, 0, movedDept);
+      
+      // Update timer data to match new order
+      const reorderedTimers = { ...state.timers };
+      Object.keys(reorderedTimers).forEach(date => {
+        const dayTimers = { ...reorderedTimers[date] };
+        const newDayTimers = {};
+        
+        // Create mapping from old indices to new indices
+        const indexMap = {};
+        state.departments.forEach((_, oldIndex) => {
+          let newIndex = oldIndex;
+          if (oldIndex === fromIndex) {
+            newIndex = toIndex;
+          } else if (fromIndex < toIndex && oldIndex > fromIndex && oldIndex <= toIndex) {
+            newIndex = oldIndex - 1;
+          } else if (fromIndex > toIndex && oldIndex >= toIndex && oldIndex < fromIndex) {
+            newIndex = oldIndex + 1;
+          }
+          indexMap[oldIndex] = newIndex;
+        });
+        
+        // Apply the mapping
+        Object.keys(dayTimers).forEach(oldKey => {
+          const oldIndex = parseInt(oldKey);
+          const newIndex = indexMap[oldIndex];
+          newDayTimers[newIndex] = dayTimers[oldKey];
+        });
+        
+        reorderedTimers[date] = newDayTimers;
+      });
+      
+      newState = { ...state, departments: reorderedDepartments, timers: reorderedTimers };
+      break;
     default:
       return state;
   }
-  console.log('State updated:', newState);
   return newState;
 }
 
@@ -150,26 +195,120 @@ const TimeTracker = () => {
   const [state, dispatch] = useReducer(reducer, initialState, (initial) => {
     const loadedState = loadState();
     if (loadedState) {
-      // Ensure the currentDate is today's date in LA timezone
       const today = getTodayDate();
       loadedState.currentDate = today;
+      
+      // Ensure departments array exists
+      if (!loadedState.departments) {
+        loadedState.departments = defaultDepartments;
+      }
       
       // If there are no timers for today, create them
       if (!loadedState.timers[today]) {
         console.log('Creating new timers for today');
-        loadedState.timers[today] = createInitialTimers();
+        loadedState.timers[today] = createInitialTimers(loadedState.departments);
       }
       
       return loadedState;
     }
-    return initial;
+    return {
+      ...initial,
+      timers: {
+        [initial.currentDate]: createInitialTimers(initial.departments)
+      }
+    };
   });
 
+  const [editingIndex, setEditingIndex] = useState(null);
+  const [editingName, setEditingName] = useState('');
+  const [hoveredIndex, setHoveredIndex] = useState(null);
+  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
   const lastUpdateTime = useRef(Date.now());
 
   useEffect(() => {
     saveState(state);
+    
+    // Add reset function to window for easy access
+    window.resetToNewDepartments = () => {
+      const newState = {
+        currentDate: getTodayDate(),
+        departments: defaultDepartments,
+        timers: {}
+      };
+      newState.timers[newState.currentDate] = createInitialTimers(defaultDepartments);
+      dispatch({ type: 'INIT_STATE', payload: newState });
+      console.log('Reset to new departments!');
+    };
   }, [state]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setDimensions({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const calculateOptimalGrid = () => {
+    const numItems = state.departments.length;
+    const containerWidth = dimensions.width - 32; // Account for padding
+    const containerHeight = dimensions.height - 100; // Account for header and padding
+    
+    let bestCols = 1;
+    let bestRows = numItems;
+    let bestScore = Infinity;
+
+    // Try different column counts
+    for (let cols = 1; cols <= Math.min(numItems, 6); cols++) { // Limit max columns to 6
+      const rows = Math.ceil(numItems / cols);
+      const itemWidth = (containerWidth - (cols - 1) * 8) / cols; // Account for gaps
+      const itemHeight = (containerHeight - (rows - 1) * 8) / rows;
+      
+      if (itemWidth <= 0 || itemHeight <= 0) continue;
+      
+      const aspectRatio = itemWidth / itemHeight;
+      
+      // More restrictive aspect ratio range (1:1 to 2.5:1 instead of 16:9)
+      if (aspectRatio >= 0.8 && aspectRatio <= 2.5) {
+        // Prefer aspect ratios closer to 1.2-1.8 range (good for buttons)
+        const idealRatio = dimensions.width > 768 ? 1.4 : 1.2; // Slightly different for mobile vs desktop
+        let score = Math.abs(aspectRatio - idealRatio);
+        
+        // Penalize extreme column counts
+        if (cols === 1 && numItems > 4) score += 0.5; // Avoid single column for many items
+        if (cols > 4) score += 0.3; // Slightly penalize too many columns
+        
+        // Prefer grids that use space efficiently
+        const efficiency = (numItems / (cols * rows));
+        score += (1 - efficiency) * 0.2; // Small penalty for unused grid spots
+        
+        if (score < bestScore) {
+          bestScore = score;
+          bestCols = cols;
+          bestRows = rows;
+        }
+      }
+    }
+
+    // Fallback: if no good aspect ratio found, use a reasonable default
+    if (bestScore === Infinity) {
+      if (numItems <= 4) {
+        bestCols = 2;
+      } else if (numItems <= 9) {
+        bestCols = 3;
+      } else {
+        bestCols = 4;
+      }
+      bestRows = Math.ceil(numItems / bestCols);
+    }
+
+    return { cols: bestCols, rows: bestRows };
+  };
+
+  const { cols } = calculateOptimalGrid();
 
   useEffect(() => {
     const updateTimers = () => {
@@ -179,10 +318,10 @@ const TimeTracker = () => {
       if (elapsedSeconds > 0) {
         const currentDateTimers = state.timers[state.currentDate];
         if (currentDateTimers) {
-          Object.keys(currentDateTimers).forEach(dept => {
-            if (currentDateTimers[dept]?.isActive) {
+          Object.keys(currentDateTimers).forEach(index => {
+            if (currentDateTimers[index]?.isActive) {
               for (let i = 0; i < elapsedSeconds; i++) {
-                dispatch({ type: 'INCREMENT_TIMER', payload: dept });
+                dispatch({ type: 'INCREMENT_TIMER', payload: parseInt(index) });
               }
             }
           });
@@ -191,13 +330,12 @@ const TimeTracker = () => {
       }
     };
 
-    const intervalId = setInterval(updateTimers, 1000);  // Update every second
-
+    const intervalId = setInterval(updateTimers, 1000);
     return () => clearInterval(intervalId);
   }, [state.timers, state.currentDate]);
 
-  const toggleTimer = useCallback((dept) => {
-    dispatch({ type: 'TOGGLE_TIMER', payload: dept });
+  const toggleTimer = useCallback((index) => {
+    dispatch({ type: 'TOGGLE_TIMER', payload: index });
   }, []);
 
   useEffect(() => {
@@ -206,18 +344,91 @@ const TimeTracker = () => {
         e.preventDefault();
         e.stopPropagation();
         const index = parseInt(e.key.slice(1)) - 1;
-        if (index >= 0 && index < departments.length) {
-          toggleTimer(departments[index]);
+        if (index >= 0 && index < state.departments.length) {
+          toggleTimer(index);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [toggleTimer]);
+  }, [toggleTimer, state.departments.length]);
 
-  const adjustTime = (dept, direction) => {
-    dispatch({ type: 'ADJUST_TIME', payload: { dept, direction } });
+  const adjustTime = (index, direction) => {
+    dispatch({ type: 'ADJUST_TIME', payload: { index, direction } });
+  };
+
+  const startEditing = (index, currentName) => {
+    setEditingIndex(index);
+    setEditingName(currentName);
+  };
+
+  const saveEdit = () => {
+    if (editingName.trim()) {
+      dispatch({ 
+        type: 'UPDATE_DEPARTMENT_NAME', 
+        payload: { index: editingIndex, name: editingName.trim() } 
+      });
+    }
+    setEditingIndex(null);
+    setEditingName('');
+  };
+
+  const cancelEdit = () => {
+    setEditingIndex(null);
+    setEditingName('');
+  };
+
+  const handleEditKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      saveEdit();
+    } else if (e.key === 'Escape') {
+      cancelEdit();
+    }
+  };
+
+  const handleDragStart = (e, index) => {
+    setDraggedIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    // Add a small delay to prevent immediate toggling when starting drag
+    setTimeout(() => {
+      e.target.style.pointerEvents = 'none';
+    }, 0);
+  };
+
+  const handleDragEnd = (e) => {
+    e.target.style.pointerEvents = 'auto';
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDragEnter = (e, index) => {
+    e.preventDefault();
+    setDragOverIndex(index);
+  };
+
+  const handleDragLeave = (e) => {
+    // Only clear if we're leaving the container entirely
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOverIndex(null);
+    }
+  };
+
+  const handleDrop = (e, dropIndex) => {
+    e.preventDefault();
+    if (draggedIndex !== null && draggedIndex !== dropIndex) {
+      dispatch({ 
+        type: 'REORDER_DEPARTMENTS', 
+        payload: { fromIndex: draggedIndex, toIndex: dropIndex } 
+      });
+    }
+    setDraggedIndex(null);
+    setDragOverIndex(null);
   };
 
   const formatTime = (seconds) => {
@@ -267,48 +478,115 @@ const TimeTracker = () => {
         <h2 className="text-xs sm:text-sm text-white font-light">{formatDate(state.currentDate)}</h2>
         <button onClick={() => changeDate('next')}><ChevronRight size={18} color="white" /></button>
       </div>
-      <div className="flex-grow grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 auto-rows-fr">
-        {departments.map((dept) => {
-          const activeColor = backgroundColors[dept];
+      <div 
+        className="flex-grow grid gap-2 auto-rows-fr"
+        style={{
+          gridTemplateColumns: `repeat(${cols}, 1fr)`
+        }}
+      >
+        {state.departments.map((dept, index) => {
+          const activeColor = backgroundColors[index % Object.keys(backgroundColors).length];
           const lighterColor = increaseLuminosity(activeColor, 60);
-          const isActive = state.timers[state.currentDate]?.[dept]?.isActive || false;
+          const isActive = state.timers[state.currentDate]?.[index]?.isActive || false;
+          const hasTime = (state.timers[state.currentDate]?.[index]?.time || 0) > 0;
           const buttonBgColor = isActive ? lighterColor : activeColor;
+          const isEditing = editingIndex === index;
+          const isDragging = draggedIndex === index;
+          const isDragOver = dragOverIndex === index && draggedIndex !== index;
+          
           return (
             <div 
-              key={dept} 
-              className="flex flex-col justify-between cursor-pointer rounded-lg overflow-hidden"
+              key={index} 
+              className={`flex flex-col justify-between cursor-pointer rounded-lg overflow-hidden relative ${isDragging ? 'opacity-50 transform scale-95' : ''} ${isDragOver ? 'ring-2 ring-white/50' : ''}`}
               style={{
                 background: isActive 
                   ? `linear-gradient(to bottom, ${lighterColor} 0%, ${activeColor} 100%)`
                   : 'transparent',
-                border: isActive ? 'none' : `1px solid #4A4A4A`,
-                transition: 'all 0.15s ease-in-out'
+                border: isActive ? 'none' : `1px solid ${hasTime ? increaseLuminosity(activeColor, 20) : '#4A4A4A'}`,
+                borderWidth: hasTime && !isActive ? '2px' : '1px',
+                boxShadow: hasTime && !isActive ? `0 0 12px 2px ${buttonBgColor}80` : 'none',
+                transition: isDragging ? 'none' : 'all 0.15s ease-in-out',
+                transform: isDragOver ? 'scale(1.02)' : (isDragging ? 'scale(0.95)' : 'scale(1)')
               }}
-              onClick={() => toggleTimer(dept)}
+              onClick={() => !isEditing && !isDragging && toggleTimer(index)}
+              onMouseEnter={() => setHoveredIndex(index)}
+              onMouseLeave={() => setHoveredIndex(null)}
+              draggable={!isEditing}
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver}
+              onDragEnter={(e) => handleDragEnter(e, index)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, index)}
             >
-              <div className="flex justify-between items-baseline p-1 sm:p-2">
-                <h2 className="font-bold text-sm sm:text-base md:text-lg lg:text-xl truncate" style={{ 
-                  color: isActive ? 'white' : increaseLuminosity(activeColor, 30)
-                }}>
-                  {dept}
-                </h2>
-                <p className="text-xs sm:text-sm md:text-base lg:text-lg font-light" style={{ 
-                  color: isActive ? 'white' : increaseLuminosity(activeColor, 30)
-                }}>
-                  F{departments.indexOf(dept) + 1}
-                </p>
+
+                <div className="flex justify-between items-baseline p-1 sm:p-2">
+                <div className="flex items-center flex-1 min-w-0">
+                  {isEditing ? (
+                    <div className="flex items-center w-full gap-1">
+                      <input
+                        type="text"
+                        value={editingName}
+                        onChange={(e) => setEditingName(e.target.value)}
+                        onKeyDown={handleEditKeyDown}
+                        className="bg-transparent border border-white/30 rounded px-1 text-white text-sm flex-1 min-w-0"
+                        style={{ fontSize: 'inherit' }}
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); saveEdit(); }}
+                        className="p-1 hover:bg-white/20 rounded"
+                      >
+                        <Check size={12} color="white" />
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); cancelEdit(); }}
+                        className="p-1 hover:bg-white/20 rounded"
+                      >
+                        <X size={12} color="white" />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 min-w-0 flex-1">
+                      <h2 
+                        className="font-bold text-sm sm:text-base md:text-lg lg:text-xl truncate flex-1" 
+                        style={{ color: isActive ? 'white' : increaseLuminosity(activeColor, 30) }}
+                      >
+                        {dept}
+                      </h2>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); startEditing(index, dept); }}
+                        className="p-1 hover:bg-white/20 rounded transition-all duration-200"
+                        style={{ 
+                          opacity: hoveredIndex === index ? 0.7 : 0,
+                          transition: 'opacity 0.2s ease-in-out'
+                        }}
+                      >
+                        <Edit2 size={12} color={isActive ? 'white' : increaseLuminosity(activeColor, 30)} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {!isEditing && (
+                  <p className="text-xs sm:text-sm md:text-base lg:text-lg font-light ml-2" style={{ 
+                    color: isActive ? 'white' : increaseLuminosity(activeColor, 30)
+                  }}>
+                    F{index + 1}
+                  </p>
+                )}
               </div>
               <div className="flex-grow flex items-center justify-center">
                 <p className="text-xl sm:text-2xl md:text-3xl lg:text-4xl w-full text-center font-medium" style={{ 
                   color: increaseLuminosity(buttonBgColor, 100),
                   letterSpacing: '0.05em'
                 }}>
-                  {formatTime(state.timers[state.currentDate]?.[dept]?.time || 0)}
+                  {formatTime(state.timers[state.currentDate]?.[index]?.time || 0)}
                 </p>
               </div>
               <div className="flex">
                 <button 
-                  onClick={(e) => { e.stopPropagation(); adjustTime(dept, 'down'); }}
+                  onClick={(e) => { e.stopPropagation(); adjustTime(index, 'down'); }}
                   className="w-1/2 h-8 sm:h-10 md:h-12 flex items-center justify-center transition-all duration-300 hover:bg-opacity-20 active:bg-opacity-30 focus:outline-none"
                   style={{ 
                     backgroundColor: 'rgba(0,0,0,0.1)',
@@ -322,7 +600,7 @@ const TimeTracker = () => {
                   <ChevronDown size={20} color={increaseLuminosity(buttonBgColor, 80)} />
                 </button>
                 <button 
-                  onClick={(e) => { e.stopPropagation(); adjustTime(dept, 'up'); }}
+                  onClick={(e) => { e.stopPropagation(); adjustTime(index, 'up'); }}
                   className="w-1/2 h-8 sm:h-10 md:h-12 flex items-center justify-center transition-all duration-300 hover:bg-opacity-20 active:bg-opacity-30 focus:outline-none"
                   style={{ 
                     backgroundColor: 'rgba(0,0,0,0.1)',
